@@ -1,7 +1,7 @@
 /*
 Function for bootstrap
 
-cd Box\ Sync/My\ Eduction/OxWaSP/Modules/Module\ 4/C\ Code/
+cd Box\ Sync/My\ Eduction/OxWaSP/Modules/Module\ 4/Module4_C
 compile with gcc -I/usr/local/include -L/usr/local/lib -o BLB_serial BLB_serial.c -std=c11 -lgsl
 */
 
@@ -11,6 +11,8 @@ compile with gcc -I/usr/local/include -L/usr/local/lib -o BLB_serial BLB_serial.
 #include <gsl/gsl_statistics.h>
 #include <math.h>
 #include <time.h>
+#include <sys/time.h>
+#include <omp.h>
 
 void samp_k_from_n (int k, int n, int * a, gsl_rng *restrict r)
 {
@@ -152,7 +154,7 @@ void bootstrap_b_multi(double subsamp[], double *result, int b, int B, int n, gs
 
 		// calculate theta_star
 		theta_star[i] = gsl_stats_wmean(v, 1, subsamp, 1, b);
-		printf("%f\n", theta_star[i]);
+		//printf("%f\n", theta_star[i]);
 		//printf("\n\n T_[%i] = %f\n\n", i, T_boot[i]);
 	}
 	
@@ -229,17 +231,83 @@ void BLB_serial_multi(double x[], double *result, float gamma, int s, int R, int
 	*result = gsl_stats_mean(xis, 1, s);	
 }
 
+void BLB_serial_multi_omp(double x[], double *result, float gamma, int s, int R, int n)
+// n is length of the data 
+{
+  static gsl_rng *restrict r = NULL;
+  
+  if(r == NULL) { // First call to this function, setup RNG
+    gsl_rng_env_setup();
+    r = gsl_rng_alloc(gsl_rng_mt19937);
+    gsl_rng_set(r, time(NULL));
+  }
+
+	int b;
+	b = (int) floor(pow(n, gamma));
+	
+	double xi = 0.0;
+	
+	#pragma omp parallel for reduction(+:xi)
+	for (int i = 0; i < s; i++)
+	{
+		// select subsample of size b of the data
+		double subsamp[b];
+		gsl_ran_choose(r, subsamp, b, x, n, sizeof(double));
+				
+		// run bootstrap on that subsample (uses weights)
+		bootstrap_b_multi(subsamp, &xi, b, R, n, r);
+	}
+	
+	// take average of results from the s subsamples
+	xi = xi / double (n);
+	
+	//*result = gsl_stats_mean(xis, 1, s);	
+}
+
+
 
 int main(void) {
 	//printf("\nI am here.\n\n");
-	double data[6] = {3.0, 4.0, 5.0, 7.0, 2.0, 8.0};
+	//double data[6] = {3.0, 4.0, 5.0, 7.0, 2.0, 8.0};
+	
+  static gsl_rng *restrict r = NULL;
+  
+  if(r == NULL) { // First call to this function, setup RNG
+    gsl_rng_env_setup();
+    r = gsl_rng_alloc(gsl_rng_mt19937);
+    gsl_rng_set(r, time(NULL));
+  }
+  
+  
+  int N = 10000;
+  double data[N];
+  
+  for (int i = 0; i < N; i++)
+  {
+  	data[i] = gsl_ran_gaussian(r, 1.0);
+  	// printf("se is %f.\n", data[i]);
+  }
+  	
 	
 	double result;
 	
-	//bootstrap(data, &result, 10, 6);
+	struct timeval tv1, tv2;
+	gettimeofday(&tv1, NULL);
 	
-	BLB_serial_multi(data, &result, 0.9, 15, 100, 6);
+	//clock_t start, end;
+	//double cpu_time_used;
+	
+	//bootstrap(data, &result, 10, 6);
+	//start = clock();
+	BLB_serial_multi(data, &result, 0.9, 15, 100, N);
+	//end = clock();
+	//cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+	
+	gettimeofday(&tv2, NULL);
+	
 	
 	printf("se is %f.\n", result);
+	printf("time taken: %f\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
+         (double) (tv2.tv_sec - tv1.tv_sec));
 	return 0;
 }
